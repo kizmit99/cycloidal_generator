@@ -20,16 +20,15 @@ def run(context):
         description: the text which will appear with the box
         default_value: the initial value that will appear before being edited """
 
-    parameters.addParameter('fixedPinRingDiameter', "mm", 'Fixed Pin Ring Diamter', 5)
-    parameters.addParameter('N', "", 'Number of pins', 10)
+    parameters.addParameter('fixedPinRingDiameter', "mm", 'Fixed Pin Ring Diameter', 5)
+    parameters.addParameter('N', "", 'Number of Fixed Pins', 10)
     parameters.addParameter('fixedPinDiameter', "mm", 'Diameter of Fixed Pins', .3)
     parameters.addParameter('rotorThickness', "mm", 'Rotor Thickness', .5)
-    parameters.addParameter('fixedPinLength', "mm", 'Lenght of the Fixed Pins', .5*2)
     parameters.addParameter('bore', "mm", 'Bore Diameter', 1)
-    parameters.addParameter('numGears', "", 'Number of gears', 1)
-    parameters.addParameter('numHoles', "", 'Number of drive holes', 0)
-    parameters.addParameter('holeCircleDiameter', "mm", 'Diameter of hole circle', 3)
-    parameters.addParameter('holePinDiameter', "mm", 'Diameter of drive pins', .25)
+    parameters.addParameter('numGears', "", 'Number of Gears', 1)
+    parameters.addParameter('numHoles', "", 'Number of Drive Holes', 0)
+    parameters.addParameter('holeCircleDiameter', "mm", 'Diameter of Hole Circle', 3)
+    parameters.addParameter('holePinDiameter', "mm", 'Diameter of Drive Pins', .25)
     parameters.addParameter('eccentricityRatio', "", 'Eccentricity Ratio', .8)
 
     created_object = CreatedObject() # Create an instance of the designed class
@@ -42,52 +41,44 @@ class CreatedObject:
     def __init__(self):
         self.parameters = {}
 
-    def build(self, app, ui):
-        """ Perform the features to create the component """
-
-        newComp = fusionUtils.createNewComponent(app)
-        if newComp is None:
-            ui.messageBox('New component failed to create', 'New Component Failed')
-            return
-
-
-        # Copy parameters into local variables for ease of use
-        D = self.parameters["fixedPinRingDiameter"]
-        N = self.parameters["N"]
-        Dp = self.parameters["fixedPinDiameter"]
-        rotorThickness = self.parameters["rotorThickness"]
-        fixedPinLength = self.parameters["fixedPinLength"]
-        bore = self.parameters["bore"]
-        numGears = self.parameters["numGears"]
-        numHoles = self.parameters["numHoles"]
-        holeCircleDiameter = self.parameters["holeCircleDiameter"]
-        holePinDiameter = self.parameters["holePinDiameter"]
-        eccentricityRatio = self.parameters["eccentricityRatio"]
-
-        units_mgr = app.activeProduct.unitsManager
-
+    def buildRotor(self, app, ui, index, D, N, Dp, rotorThickness, bore, numHoles, holeCircleDiameter, holePinDiameter, eccentricityRatio):
         #other constants based on the original inputs
         d = (float(N - 1) / float(N)) * D #cycloid base circle diameter
         sigma = D / float(N) #rolling circle diameter
         E = eccentricityRatio * (sigma / 2.0) #eccentricity
 
+        zPos = index * rotorThickness
+
+        if ((index % 2) == 0):
+            rotorOffset = -E
+            rotorRotation = 0
+            holeRotation = 0
+        else:
+            rotorOffset = E
+            rotorRotation = math.pi / N
+            holeRotation = -rotorRotation
+
         maxDist = 0.25 * (Dp / 2.0) #maximum allowed distance between points
         minDist = 0.5 * maxDist #the minimum allowed distance between points
-        
-        
+         
         product = app.activeProduct
         design = adsk.fusion.Design.cast(product)
         root = design.rootComponent
 
         rotorOcc = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
         rotor = rotorOcc.component
-        rotor.name = 'rotor'
+        rotor.name = 'rotor' + str(index)
 
-        sk = rotor.sketches.add(root.xYConstructionPlane)
+        constructionPlane = root.xYConstructionPlane
+        if (index > 0):
+            planes = rotor.constructionPlanes
+            planeInput = planes.createInput()
+            planeInput.setByOffset(constructionPlane, adsk.core.ValueInput.createByReal(index * rotorThickness))
+            constructionPlane = planes.add(planeInput)
+
+        sk = rotor.sketches.add(constructionPlane)
 
         points = adsk.core.ObjectCollection.create()
-
-        #ui.messageBox('Ratio will be ' + string(1/N))
 
         (xs, ys) = getPoint(0, d, sigma, E, N, Dp)
         points.add(adsk.core.Point3D.create(xs,ys,0))
@@ -101,18 +92,13 @@ class CreatedObject:
         dt = math.pi / N
         numPoints = 0
 
-        #ui.messageBox('begin point calculation')
-
         while ((math.sqrt((x-xe)**2 + (y-ye)**2) > maxDist or ct < et/2) and ct < et): #close enough to the end to call it, but over half way
-        #while (ct < et/80): #close enough to the end to call it, but over half way
             (xt, yt) = getPoint(ct+dt, d, sigma, E, N, Dp)
             dist = getDist(x, y, xt, yt)
 
             ddt = dt/2
             lastTooBig = False
             lastTooSmall = False
-
-            #ui.messageBox('debug 1 ct='+str(ct))
 
             MaxLoops = 20
             loopCount = 0
@@ -121,7 +107,7 @@ class CreatedObject:
                 if (loopCount > MaxLoops):
                     ui.messageBox('Unable to minimize error, resulting shapes may have issues')
                     break
-                #ui.messageBox('debug 2 dt='+str(dt))
+
                 if (dist > maxDist):
                     if (lastTooSmall):
                         ddt /= 2
@@ -152,8 +138,6 @@ class CreatedObject:
             numPoints += 1
             ct += dt
 
-        #ui.messageBox('point calculation complete')
-
         points.add(adsk.core.Point3D.create(xe,ye,0))
         crv = sk.sketchCurves.sketchFittedSplines.add(points)
 
@@ -170,17 +154,17 @@ class CreatedObject:
 
         # Get the extrusion body
         body1 = extrude1.bodies.item(0)
-        body1.name = "rotor"
+        body1.name = "rotor" + str(index)
 
-        inputEntites = adsk.core.ObjectCollection.create()
-        inputEntites.add(body1)
+        inputEntities = adsk.core.ObjectCollection.create()
+        inputEntities.add(body1)
 
         # Get Z axis for circular pattern
         zAxis = rotor.zConstructionAxis
 
         # Create the input for circular pattern
         circularFeats = rotor.features.circularPatternFeatures
-        circularFeatInput = circularFeats.createInput(inputEntites, zAxis)
+        circularFeatInput = circularFeats.createInput(inputEntities, zAxis)
 
         # Set the quantity of the elements
         circularFeatInput.quantity = adsk.core.ValueInput.createByReal(N-1)
@@ -204,11 +188,73 @@ class CreatedObject:
 
         rotor.features.combineFeatures.add(combineInput)
 
-        #Offset the rotor to make the shaft rotat concentric with origin
+        # create center hole
+        centerHoleSketch = rotor.sketches.add(constructionPlane)
+        sketchCircles = centerHoleSketch.sketchCurves.sketchCircles
+        centerPoint = adsk.core.Point3D.create(0, 0, 0)
+        sketchCircles.addByCenterRadius(centerPoint, bore/2)
+
+        centerHoleProfile = centerHoleSketch.profiles.item(0)
+
+        distance = adsk.core.ValueInput.createByReal(rotorThickness)
+        centerExtrudes = rotor.features.extrudeFeatures.addSimple(centerHoleProfile, distance, adsk.fusion.FeatureOperations.CutFeatureOperation)
+
+
+        #Create holes for pins
+
+        if numHoles != 0:
+            pinHoleSketch = rotor.sketches.add(constructionPlane)
+            sketchCircles = pinHoleSketch.sketchCurves.sketchCircles
+            hx = (holeCircleDiameter / 2) * math.cos(holeRotation)
+            hy = (holeCircleDiameter / 2) * math.sin(holeRotation)
+            centerPoint = adsk.core.Point3D.create(hx, hy, 0)
+            sketchCircles.addByCenterRadius(centerPoint, holePinDiameter/2 + E)
+
+            pinHoleProfile = pinHoleSketch.profiles.item(0)
+
+            distance = adsk.core.ValueInput.createByReal(rotorThickness)
+            pinExtrudes = rotor.features.extrudeFeatures.addSimple(pinHoleProfile, distance, adsk.fusion.FeatureOperations.CutFeatureOperation)
+
+            inputEntites = adsk.core.ObjectCollection.create()
+            inputEntites.add(pinExtrudes)
+
+            # Get Z axis for circular pattern
+            zAxis = rotor.zConstructionAxis
+
+            # Create the input for circular pattern
+            circularFeats = rotor.features.circularPatternFeatures
+            circularFeatInput = circularFeats.createInput(inputEntites, zAxis)
+
+            # Set the quantity of the elements
+            circularFeatInput.quantity = adsk.core.ValueInput.createByReal(numHoles)
+
+            # Set the angle of the circular pattern
+            circularFeatInput.totalAngle = adsk.core.ValueInput.createByString('360 deg')
+
+            # Set symmetry of the circular pattern
+            circularFeatInput.isSymmetric = True
+
+            # Create the circular pattern
+            circularFeat = circularFeats.add(circularFeatInput)
+
+        #Offset the rotor to make the shaft rotate concentric with origin
         transform = rotorOcc.transform
-        transform.translation = adsk.core.Vector3D.create(-E, 0, 0)
+        transform.translation = adsk.core.Vector3D.create(rotorOffset, 0, 0)
         rotorOcc.transform = transform
         design.snapshots.add()
+
+        #Rotate the rotor to make it fit in the housing
+        if (rotorRotation != 0):
+            rotation = adsk.core.Matrix3D.create()
+            rotation.setToRotation(rotorRotation, rotor.zConstructionAxis.geometry.getData()[2], rotor.originConstructionPoint.geometry)
+            rotInput = rotor.features.moveFeatures.createInput(inputEntities, rotation)
+            moveFeat = rotor.features.moveFeatures.add(rotInput)
+        
+
+    def buildHousing(self, app, ui, D, N, Dp, fixedPinLength):
+        product = app.activeProduct
+        design = adsk.fusion.Design.cast(product)
+        root = design.rootComponent
 
         housingOcc = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
         housing = housingOcc.component
@@ -256,94 +302,32 @@ class CreatedObject:
         circularFeat = circularFeats.add(circularFeatInput)
 
 
-        # create center hole
-        centerHoleSketch = sketches.add(root.xYConstructionPlane)
-        sketchCircles = centerHoleSketch.sketchCurves.sketchCircles
-        centerPoint = adsk.core.Point3D.create(-E, 0, 0)
-        sketchCircles.addByCenterRadius(centerPoint, bore/2)
+    def build(self, app, ui):
+        """ Perform the features to create the component """
 
-        centerHoleProfile = centerHoleSketch.profiles.item(0)
+        # Copy parameters into local variables for ease of use
+        D = self.parameters["fixedPinRingDiameter"]
+        N = self.parameters["N"]
+        Dp = self.parameters["fixedPinDiameter"]
+        rotorThickness = self.parameters["rotorThickness"]
+        bore = self.parameters["bore"]
+        numGears = self.parameters["numGears"]
+        numHoles = self.parameters["numHoles"]
+        holeCircleDiameter = self.parameters["holeCircleDiameter"]
+        holePinDiameter = self.parameters["holePinDiameter"]
+        eccentricityRatio = self.parameters["eccentricityRatio"]
 
-        distance = adsk.core.ValueInput.createByReal(rotorThickness)
-        centerExtrudes = housing.features.extrudeFeatures.addSimple(centerHoleProfile, distance, adsk.fusion.FeatureOperations.CutFeatureOperation)
-
-
-        #Create holes for pins
-
-        if numHoles != 0:
-            pinHoleSketch = sketches.add(root.xYConstructionPlane)
-            sketchCircles = pinHoleSketch.sketchCurves.sketchCircles
-            centerPoint = adsk.core.Point3D.create(E, holeCircleDiameter/2, 0)
-            sketchCircles.addByCenterRadius(centerPoint, holePinDiameter/2 + E)
-
-            pinHoleProfile = pinHoleSketch.profiles.item(0)
-
-            distance = adsk.core.ValueInput.createByReal(rotorThickness)
-            pinExtrudes = housing.features.extrudeFeatures.addSimple(pinHoleProfile, distance, adsk.fusion.FeatureOperations.CutFeatureOperation)
-
-            inputEntites = adsk.core.ObjectCollection.create()
-            inputEntites.add(pinExtrudes)
-
-            # Get Z axis for circular pattern
-            zAxis = rotor.zConstructionAxis
-
-            # Create the input for circular pattern
-            circularFeats = rotor.features.circularPatternFeatures
-            circularFeatInput = circularFeats.createInput(inputEntites, zAxis)
-
-            # Set the quantity of the elements
-            circularFeatInput.quantity = adsk.core.ValueInput.createByReal(numHoles)
-
-            # Set the angle of the circular pattern
-            circularFeatInput.totalAngle = adsk.core.ValueInput.createByString('360 deg')
-
-            # Set symmetry of the circular pattern
-            circularFeatInput.isSymmetric = True
-
-            # Create the circular pattern
-            circularFeat = circularFeats.add(circularFeatInput)
-
-
-        # Create multiple gears
-
-        body = body1
+        maxDist = 0.25 * (Dp / 2.0) #maximum allowed distance between points
+        minDist = 0.5 * maxDist #the minimum allowed distance between points
         
-        # Check to see if the body is in the root component or another one.
-        target = None
-        if body.assemblyContext:
-            # It's in another component.
-            target = body.assemblyContext
-        else:
-            # It's in the root component.
-            target = root
+        product = app.activeProduct
+        design = adsk.fusion.Design.cast(product)
+        root = design.rootComponent
 
-        # Get the xSize.
-        xSize = body.boundingBox.maxPoint.x - body.boundingBox.minPoint.x            
+        for i in range(int(numGears)):
+            self.buildRotor(app, ui, i, D, N, Dp, rotorThickness, bore, numHoles, holeCircleDiameter, holePinDiameter, eccentricityRatio)
 
-        # Create several copies of the body.
-        currentZ = 0
-        for i in range(0,int(numGears)-1):
-            # Create the copy.
-            newBody = body.copyToComponent(target)
-            
-            # Increment the position.            
-            currentZ +=  rotorThickness
-
-            trans = adsk.core.Matrix3D.create()
-            trans.translation = adsk.core.Vector3D.create(0, 0, currentZ)
-            
-
-            # Move the body using a move feature.
-            bodyColl = adsk.core.ObjectCollection.create()
-            bodyColl.add(newBody)
-            moveInput = root.features.moveFeatures.createInput(bodyColl, trans)
-            moveFeat = root.features.moveFeatures.add(moveInput)
-            
-            if (i%2 == 0):
-                rotation = adsk.core.Matrix3D.create()
-                rotation.setToRotation(units_mgr.convert(180, "deg", "rad"), root.yConstructionAxis.geometry.getData()[2], adsk.core.Point3D.create(0, 0, currentZ + rotorThickness/2))
-                moveInput2 = root.features.moveFeatures.createInput(bodyColl, rotation)
-                moveFeat = root.features.moveFeatures.add(moveInput2)
+        self.buildHousing(app, ui, D, N, Dp, (rotorThickness * numGears))
 
 
 def getPoint(t, d, sigma, E, N, Dp):
@@ -355,9 +339,6 @@ def getPoint(t, d, sigma, E, N, Dp):
         E: eccentricity
         N: number of pins
         Dp: fixed pin diameter """
-    # psi = math.atan2(math.sin((1-N)*t), ((R/(E*N))-math.cos((1-N)*t)))
-    # x = (R*math.cos(t))-(Rr*math.cos(t+psi))-(E*math.cos(N*t))
-    # y = (-R*math.sin(t))+(Rr*math.sin(t+psi))+(E*math.sin(N*t))
 
     h = ((d / 2.0) + (sigma / 2.0))
     p1x = h * math.cos(t)
