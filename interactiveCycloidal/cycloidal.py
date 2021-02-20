@@ -10,7 +10,7 @@ from . import fusionUtils
 def run(context):
     """ The function that is run by Fusion """
 
-    default_name = 'Cycloidal' # The name which appears in the top bar
+    default_name = 'Cycloidal-custom' # The name which appears in the top bar
     parameters = fusionUtils.Parameters()
 
     """Parameters to appear in the Fusion window
@@ -20,16 +20,17 @@ def run(context):
         description: the text which will appear with the box
         default_value: the initial value that will appear before being edited """
 
-    parameters.addParameter('rotorThickness', "mm", 'Rotor Thickness', .635)
-    parameters.addParameter('housingThickness', "mm", 'Housing Thickness', .635*2)
-    parameters.addParameter('R', "mm", 'Radius', 5)
+    parameters.addParameter('fixedPinRingDiameter', "mm", 'Fixed Pin Ring Diamter', 5)
     parameters.addParameter('N', "", 'Number of pins', 10)
+    parameters.addParameter('fixedPinDiameter', "mm", 'Diameter of Fixed Pins', .3)
+    parameters.addParameter('rotorThickness', "mm", 'Rotor Thickness', .5)
+    parameters.addParameter('fixedPinLength', "mm", 'Lenght of the Fixed Pins', .5*2)
     parameters.addParameter('bore', "mm", 'Bore Diameter', 1)
     parameters.addParameter('numGears', "", 'Number of gears', 1)
     parameters.addParameter('numHoles', "", 'Number of drive holes', 0)
-    parameters.addParameter('holePinDiameter', "mm", 'Diameter of drive pins', .25)
     parameters.addParameter('holeCircleDiameter', "mm", 'Diameter of hole circle', 3)
-    parameters.addParameter('eccentricityRatio', "", 'Eccentricity Ratio', .5)
+    parameters.addParameter('holePinDiameter', "mm", 'Diameter of drive pins', .25)
+    parameters.addParameter('eccentricityRatio', "", 'Eccentricity Ratio', .8)
 
     created_object = CreatedObject() # Create an instance of the designed class
     fusionUtils.run(parameters, default_name, created_object)
@@ -51,23 +52,26 @@ class CreatedObject:
 
 
         # Copy parameters into local variables for ease of use
-        eccentricityRatio = self.parameters["eccentricityRatio"]
-        rotorThickness = self.parameters["rotorThickness"]
-        housingThickness = self.parameters["housingThickness"]
-        R = self.parameters["R"]
+        D = self.parameters["fixedPinRingDiameter"]
         N = self.parameters["N"]
+        Dp = self.parameters["fixedPinDiameter"]
+        rotorThickness = self.parameters["rotorThickness"]
+        fixedPinLength = self.parameters["fixedPinLength"]
         bore = self.parameters["bore"]
         numGears = self.parameters["numGears"]
         numHoles = self.parameters["numHoles"]
-        holePinDiameter = self.parameters["holePinDiameter"]
         holeCircleDiameter = self.parameters["holeCircleDiameter"]
+        holePinDiameter = self.parameters["holePinDiameter"]
+        eccentricityRatio = self.parameters["eccentricityRatio"]
+
         units_mgr = app.activeProduct.unitsManager
 
         #other constants based on the original inputs
-        housing_cir = 2 * R * math.pi
-        Rr = housing_cir / (4 * N)#roller radius
-        E = eccentricityRatio * Rr#eccentricity
-        maxDist = 0.25 * Rr #maximum allowed distance between points
+        d = (float(N - 1) / float(N)) * D #cycloid base circle diameter
+        sigma = D / float(N) #rolling circle diameter
+        E = eccentricityRatio * (sigma / 2.0) #eccentricity
+
+        maxDist = 0.25 * (Dp / 2.0) #maximum allowed distance between points
         minDist = 0.5 * maxDist #the minimum allowed distance between points
         
         
@@ -83,13 +87,13 @@ class CreatedObject:
 
         points = adsk.core.ObjectCollection.create()
 
-        #ui.messageBox('Ratio will be ' + 1/N)
+        #ui.messageBox('Ratio will be ' + string(1/N))
 
-        (xs, ys) = getPoint(0, R, Rr, E, N)
+        (xs, ys) = getPoint(0, d, sigma, E, N, Dp)
         points.add(adsk.core.Point3D.create(xs,ys,0))
 
         et = 2 * math.pi / (N-1)
-        (xe, ye) = getPoint(et, R, Rr, E, N)
+        (xe, ye) = getPoint(et, d, sigma, E, N, Dp)
         x = xs
         y = ys
         dist = 0
@@ -97,16 +101,27 @@ class CreatedObject:
         dt = math.pi / N
         numPoints = 0
 
+        #ui.messageBox('begin point calculation')
+
         while ((math.sqrt((x-xe)**2 + (y-ye)**2) > maxDist or ct < et/2) and ct < et): #close enough to the end to call it, but over half way
         #while (ct < et/80): #close enough to the end to call it, but over half way
-            (xt, yt) = getPoint(ct+dt, R, Rr, E, N)
+            (xt, yt) = getPoint(ct+dt, d, sigma, E, N, Dp)
             dist = getDist(x, y, xt, yt)
 
             ddt = dt/2
             lastTooBig = False
             lastTooSmall = False
 
+            #ui.messageBox('debug 1 ct='+str(ct))
+
+            MaxLoops = 20
+            loopCount = 0
             while (dist > maxDist or dist < minDist):
+                loopCount = loopCount + 1
+                if (loopCount > MaxLoops):
+                    ui.messageBox('Unable to minimize error, resulting shapes may have issues')
+                    break
+                #ui.messageBox('debug 2 dt='+str(dt))
                 if (dist > maxDist):
                     if (lastTooSmall):
                         ddt /= 2
@@ -128,7 +143,7 @@ class CreatedObject:
                     dt += ddt
 
 
-                (xt, yt) = getPoint(ct+dt, R, Rr, E, N)
+                (xt, yt) = getPoint(ct+dt, d, sigma, E, N, Dp)
                 dist = getDist(x, y, xt, yt)
 
             x = xt
@@ -136,6 +151,8 @@ class CreatedObject:
             points.add(adsk.core.Point3D.create(x,y,0))
             numPoints += 1
             ct += dt
+
+        #ui.messageBox('point calculation complete')
 
         points.add(adsk.core.Point3D.create(xe,ye,0))
         crv = sk.sketchCurves.sketchFittedSplines.add(points)
@@ -189,7 +206,7 @@ class CreatedObject:
 
         #Offset the rotor to make the shaft rotat concentric with origin
         transform = rotorOcc.transform
-        transform.translation = adsk.core.Vector3D.create(E, 0, 0)
+        transform.translation = adsk.core.Vector3D.create(-E, 0, 0)
         rotorOcc.transform = transform
         design.snapshots.add()
 
@@ -202,16 +219,16 @@ class CreatedObject:
         rotorClearanceSketch = sketches.add(root.xYConstructionPlane)
         sketchCircles = rotorClearanceSketch.sketchCurves.sketchCircles
         centerPoint = adsk.core.Point3D.create(0, 0, 0)
-        sketchCircles.addByCenterRadius(centerPoint, R)
+        sketchCircles.addByCenterRadius(centerPoint, (D / 2.0))
 
         #add rollers
         rollerSketch = sketches.add(root.xYConstructionPlane)
         sketchCircles = rollerSketch.sketchCurves.sketchCircles
-        centerPoint = adsk.core.Point3D.create(R, 0, 0)
-        sketchCircles.addByCenterRadius(centerPoint, Rr )
+        centerPoint = adsk.core.Point3D.create((D / 2.0), 0, 0)
+        sketchCircles.addByCenterRadius(centerPoint, (Dp / 2.0))
 
         rollerProfile = rollerSketch.profiles.item(0)
-        distance = adsk.core.ValueInput.createByReal(housingThickness)
+        distance = adsk.core.ValueInput.createByReal(fixedPinLength)
         rollerExtrudes = housing.features.extrudeFeatures.addSimple(rollerProfile, distance, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
 
         # Get the extrusion body
@@ -242,7 +259,7 @@ class CreatedObject:
         # create center hole
         centerHoleSketch = sketches.add(root.xYConstructionPlane)
         sketchCircles = centerHoleSketch.sketchCurves.sketchCircles
-        centerPoint = adsk.core.Point3D.create(E, 0, 0)
+        centerPoint = adsk.core.Point3D.create(-E, 0, 0)
         sketchCircles.addByCenterRadius(centerPoint, bore/2)
 
         centerHoleProfile = centerHoleSketch.profiles.item(0)
@@ -329,19 +346,36 @@ class CreatedObject:
                 moveFeat = root.features.moveFeatures.add(moveInput2)
 
 
-def getPoint(t, R, Rr, E, N):
+def getPoint(t, d, sigma, E, N, Dp):
     """ Get a point on a cycloid with the given parameters
 
         t: parameter
-        R: major radius
-        Rr: rolling radius
+        d: cycloid base circle dia
+        sigma: rolling circle dia
         E: eccentricity
-        N: number of pins """
-    psi = math.atan2(math.sin((1-N)*t), ((R/(E*N))-math.cos((1-N)*t)))
-    x = (R*math.cos(t))-(Rr*math.cos(t+psi))-(E*math.cos(N*t))
-    y = (-R*math.sin(t))+(Rr*math.sin(t+psi))+(E*math.sin(N*t))
-    return (x,y)
+        N: number of pins
+        Dp: fixed pin diameter """
+    # psi = math.atan2(math.sin((1-N)*t), ((R/(E*N))-math.cos((1-N)*t)))
+    # x = (R*math.cos(t))-(Rr*math.cos(t+psi))-(E*math.cos(N*t))
+    # y = (-R*math.sin(t))+(Rr*math.sin(t+psi))+(E*math.sin(N*t))
 
+    h = ((d / 2.0) + (sigma / 2.0))
+    p1x = h * math.cos(t)
+    p1y = h * math.sin(t)
+    p2x = E * math.cos(t * N)
+    p2y = E * math.sin(t * N)
+    px = p1x + p2x
+    py = p1y + p2y
+    dxdt = (-h * math.sin(t)) - (N * E * math.sin(t * N))
+    dydt = (h * math.cos(t)) + (N * E * math.cos(t * N))
+    denom = math.sqrt((dxdt * dxdt) + (dydt * dydt))
+    dx = -((Dp / 2.0) * dydt) / denom
+    dy = ((Dp / 2.0) * dxdt) / denom
+    x = px + dx
+    y = py + dy
+
+    return (x,y)
+ 
 
 def getDist(xa, ya, xb, yb):
     """ Get distance between two 2D points (xa,ya) and (xb,yb)"""
